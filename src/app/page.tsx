@@ -35,7 +35,7 @@ interface AgentState {
   last_action: string;
 }
 
-const THEME = "#7c3aed";
+const THEME = "#007AFF";
 
 export default function MissFortunePage() {
   return (
@@ -92,7 +92,7 @@ function Dashboard() {
     render: (props) => {
       if (props.status === "executing" || props.status === "inProgress") {
         return (
-          <div className="text-purple-300 text-sm py-2 flex items-center gap-2">
+          <div className="text-[#007AFF] text-sm py-2 flex items-center gap-2">
             <svg
               className="w-4 h-4 animate-spin"
               fill="none"
@@ -157,7 +157,7 @@ function Dashboard() {
     render: (props) => {
       if (props.status === "executing" || props.status === "inProgress") {
         return (
-          <div className="text-purple-300 text-sm py-2">
+          <div className="text-[#007AFF] text-sm py-2">
             Loading order book...
           </div>
         );
@@ -204,17 +204,17 @@ function Dashboard() {
       }
 
       return (
-        <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 my-2 max-w-sm">
+        <div className="bg-white rounded-2xl shadow-sm p-4 my-2 max-w-sm">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-purple-400 text-xs font-medium uppercase tracking-wide">
+            <span className="text-[#007AFF] text-xs font-medium uppercase tracking-wide">
               {isExecuting ? "Placing Order..." : "Order"}
             </span>
             {!isExecuting && (
               <span
                 className={`text-xs px-2 py-0.5 rounded-full ${
                   resultData.error
-                    ? "bg-red-500/20 text-red-300"
-                    : "bg-green-500/20 text-green-300"
+                    ? "bg-[#FF3B30]/10 text-[#FF3B30]"
+                    : "bg-[#34C759]/10 text-[#34C759]"
                 }`}
               >
                 {resultData.error ? "Failed" : resultData.status || "Done"}
@@ -225,26 +225,26 @@ function Dashboard() {
             <div>
               <span className="text-gray-500 text-xs">Side</span>
               <p
-                className={`font-medium ${props.args.side === "BUY" ? "text-green-400" : "text-red-400"}`}
+                className={`font-medium ${props.args.side === "BUY" ? "text-[#34C759]" : "text-[#FF3B30]"}`}
               >
                 {props.args.side}
               </p>
             </div>
             <div>
               <span className="text-gray-500 text-xs">Price</span>
-              <p className="text-gray-300 font-medium">
+              <p className="text-gray-900 font-medium">
                 ${props.args.price}
               </p>
             </div>
             <div>
               <span className="text-gray-500 text-xs">Size</span>
-              <p className="text-gray-300 font-medium">
+              <p className="text-gray-900 font-medium">
                 {props.args.size} shares
               </p>
             </div>
             <div>
               <span className="text-gray-500 text-xs">Cost</span>
-              <p className="text-gray-300 font-medium">
+              <p className="text-gray-900 font-medium">
                 ${(Number(props.args.price) * Number(props.args.size)).toFixed(2)}
               </p>
             </div>
@@ -266,18 +266,18 @@ function Dashboard() {
   const lastAction = state.last_action || "";
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className="min-h-screen bg-[#f2f2f7] text-gray-900">
       {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-4">
+      <header className="bg-white/80 backdrop-blur-xl shadow-sm sticky top-0 z-50 px-6 py-4">
         <div className="flex items-center justify-between max-w-6xl mx-auto">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center text-lg font-bold">
+            <div className="w-8 h-8 rounded-lg bg-[#007AFF] flex items-center justify-center text-lg font-bold text-white">
               M
             </div>
-            <h1 className="text-xl font-bold text-white">Miss Fortune</h1>
+            <h1 className="text-xl font-bold text-gray-900">Miss Fortune</h1>
           </div>
           <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className="w-2 h-2 rounded-full bg-green-500" />
+            <span className="w-2 h-2 rounded-full bg-[#34C759]" />
             Connected
           </div>
         </div>
@@ -286,7 +286,7 @@ function Dashboard() {
       <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
         {/* Markets grid */}
         <section>
-          <h2 className="text-lg font-semibold text-gray-300 mb-3">
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">
             Watchlist
           </h2>
           {markets.length > 0 ? (
@@ -304,7 +304,7 @@ function Dashboard() {
               ))}
             </div>
           ) : (
-            <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-8 text-center">
+            <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
               <p className="text-gray-500">
                 No markets yet. Ask Miss Fortune to find some!
               </p>
@@ -314,14 +314,14 @@ function Dashboard() {
 
         {/* Positions */}
         <section>
-          <h2 className="text-lg font-semibold text-gray-300 mb-3">
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">
             Positions
           </h2>
           {positions.length > 0 ? (
-            <div className="overflow-x-auto bg-gray-800/50 border border-gray-700/50 rounded-xl">
+            <div className="overflow-x-auto bg-white rounded-2xl shadow-sm">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-700 text-xs text-gray-500 uppercase">
+                  <tr className="border-b border-gray-200 text-xs text-gray-500 uppercase">
                     <th className="py-2 px-3 text-left">Market</th>
                     <th className="py-2 px-3 text-left">Outcome</th>
                     <th className="py-2 px-3 text-right">Size</th>
@@ -345,7 +345,7 @@ function Dashboard() {
               </table>
             </div>
           ) : (
-            <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-8 text-center">
+            <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
               <p className="text-gray-500">
                 No positions yet. Trading activates when wallet credentials are
                 configured.
@@ -357,10 +357,10 @@ function Dashboard() {
         {/* Activity log */}
         {lastAction && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-300 mb-3">
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">
               Last Activity
             </h2>
-            <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl px-4 py-3 text-sm text-gray-400">
+            <div className="bg-white rounded-2xl shadow-sm px-4 py-3 text-sm text-gray-500">
               {lastAction}
             </div>
           </section>
