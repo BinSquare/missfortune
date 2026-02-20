@@ -10,7 +10,6 @@ export function DefaultToolComponent({
   args,
   status,
   result,
-  themeColor,
 }: BackendToolsProps) {
   const [showArgs, setShowArgs] = useState(false);
   const [showResult, setShowResult] = useState(false);
@@ -18,11 +17,11 @@ export function DefaultToolComponent({
     switch (status) {
       case "executing":
       case "inProgress":
-        return "bg-blue-500/20 text-blue-300 border-blue-400/30";
+        return "bg-[#007AFF]/10 text-[#007AFF] border-[#007AFF]/20";
       case "complete":
-        return "bg-green-500/20 text-green-300 border-green-400/30";
+        return "bg-[#34C759]/10 text-[#34C759] border-[#34C759]/20";
       default:
-        return "bg-white/20 text-white/70 border-white/30";
+        return "bg-gray-100 text-gray-500 border-gray-200";
     }
   };
 
@@ -69,13 +68,10 @@ export function DefaultToolComponent({
   };
 
   return (
-    <div
-      style={{ backgroundColor: themeColor }}
-      className="backdrop-blur-sm rounded-lg p-4 mt-4 mb-4 max-w-md w-full border border-white/20"
-    >
+    <div className="bg-white rounded-2xl shadow-sm p-4 mt-4 mb-4 max-w-md w-full">
       {/* Header with tool name and status */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-white font-medium text-sm">🔧 {name}</h3>
+        <h3 className="text-gray-900 font-medium text-sm">{name}</h3>
         <span
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusColor()}`}
         >
@@ -89,7 +85,7 @@ export function DefaultToolComponent({
         <div className="mb-3">
           <button
             onClick={() => setShowArgs(!showArgs)}
-            className="flex items-center gap-2 text-white/80 text-xs font-medium mb-1.5 hover:text-white transition-colors"
+            className="flex items-center gap-2 text-gray-500 text-xs font-medium mb-1.5 hover:text-gray-900 transition-colors"
           >
             <svg
               className={`w-3 h-3 transition-transform ${showArgs ? "rotate-90" : ""}`}
@@ -107,11 +103,11 @@ export function DefaultToolComponent({
             Arguments
           </button>
           {showArgs && (
-            <div className="bg-black/20 rounded p-2 space-y-1">
+            <div className="bg-gray-50 rounded-lg p-2 space-y-1">
               {Object.entries(args).map(([key, value]) => (
                 <div key={key} className="flex gap-2">
-                  <span className="text-white/50 text-xs">{key}:</span>
-                  <span className="text-white/80 text-xs font-mono">
+                  <span className="text-gray-400 text-xs">{key}:</span>
+                  <span className="text-gray-700 text-xs font-mono">
                     {JSON.stringify(value)}
                   </span>
                 </div>
@@ -126,7 +122,7 @@ export function DefaultToolComponent({
         <div>
           <button
             onClick={() => setShowResult(!showResult)}
-            className="flex items-center gap-2 text-white/80 text-xs font-medium mb-1.5 hover:text-white transition-colors"
+            className="flex items-center gap-2 text-gray-500 text-xs font-medium mb-1.5 hover:text-gray-900 transition-colors"
           >
             <svg
               className={`w-3 h-3 transition-transform ${showResult ? "rotate-90" : ""}`}
@@ -144,8 +140,8 @@ export function DefaultToolComponent({
             Result
           </button>
           {showResult && (
-            <div className="bg-black/20 rounded p-2">
-              <pre className="text-white/80 text-xs font-mono whitespace-pre-wrap break-words">
+            <div className="bg-gray-50 rounded-lg p-2">
+              <pre className="text-gray-700 text-xs font-mono whitespace-pre-wrap break-words">
                 {typeof result === "string"
                   ? result
                   : JSON.stringify(result, null, 2)}
