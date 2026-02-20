@@ -6,8 +6,10 @@ Phase 2: Trading (activates when POLYMARKET_PRIVATE_KEY is set).
 
 import json
 import os
+from datetime import datetime, timezone
 
 import requests
+from exa_py import Exa
 from ag_ui_strands import (
     StrandsAgent,
     StrandsAgentConfig,
@@ -56,6 +58,108 @@ class AgentState(BaseModel):
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API = "https://clob.polymarket.com"
+
+exa_client = None
+if os.getenv("EXA_API_KEY"):
+    exa_client = Exa(api_key=os.getenv("EXA_API_KEY"))
+
+
+@tool
+def get_closing_soon_markets(hours: int = 72, limit: int = 15):
+    """Fetch Polymarket prediction markets that are closing soon.
+
+    Args:
+        hours: How many hours from now to look ahead (default 72).
+        limit: Maximum number of results to return (default 15).
+
+    Returns:
+        JSON string of markets closing within the specified window, sorted by
+        end date (soonest first), with outcomes and current prices.
+    """
+    try:
+        resp = requests.get(
+            f"{GAMMA_API}/markets",
+            params={
+                "active": True,
+                "closed": False,
+                "limit": 100,
+                "order": "endDate",
+                "ascending": True,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        all_markets = resp.json()
+
+        now = datetime.now(timezone.utc)
+        closing_soon = []
+        for mkt in all_markets:
+            end_str = mkt.get("endDate", "")
+            if not end_str:
+                continue
+            try:
+                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                diff_hours = (end_dt - now).total_seconds() / 3600
+                if 0 < diff_hours <= hours:
+                    closing_soon.append(
+                        {
+                            "id": mkt.get("id", ""),
+                            "question": mkt.get("question", ""),
+                            "outcomes": json.loads(mkt.get("outcomes", "[]")),
+                            "outcome_prices": json.loads(
+                                mkt.get("outcomePrices", "[]")
+                            ),
+                            "volume": mkt.get("volume", "0"),
+                            "liquidity": mkt.get("liquidity", "0"),
+                            "end_date": end_str,
+                            "hours_remaining": round(diff_hours, 1),
+                        }
+                    )
+            except (ValueError, TypeError):
+                continue
+
+        closing_soon.sort(key=lambda x: x["hours_remaining"])
+        return json.dumps(closing_soon[:limit], indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def exa_research(query: str, num_results: int = 5):
+    """Research a topic using Exa AI search to find relevant news, analysis, and context.
+
+    Use this to gather background information on a Polymarket bet topic so you
+    can assess the likely outcome.
+
+    Args:
+        query: The research query (e.g. "Will Bitcoin hit 100k by end of 2025?").
+        num_results: Number of search results to return (default 5).
+
+    Returns:
+        JSON string with titles, URLs, and text snippets from relevant sources.
+    """
+    if exa_client is None:
+        return json.dumps({"error": "Exa not configured. Set EXA_API_KEY."})
+    try:
+        result = exa_client.search_and_contents(
+            query,
+            num_results=num_results,
+            text={"max_characters": 1500},
+            type="auto",
+        )
+        sources = []
+        for r in result.results:
+            sources.append(
+                {
+                    "title": r.title,
+                    "url": r.url,
+                    "published_date": r.published_date,
+                    "text": (r.text or "")[:1500],
+                }
+            )
+        return json.dumps(sources, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 @tool
@@ -354,15 +458,30 @@ model = OpenAIModel(
     model_id="gpt-4o",
 )
 
-system_prompt = (
-    "You are Miss Fortune, an autonomous Polymarket trading agent. You analyze prediction markets, "
-    "evaluate probabilities, and make betting decisions. You have access to real-time market data "
-    "from Polymarket. When the user asks you to find opportunities, analyze markets thoroughly — "
-    "look at current prices, liquidity, and recent price movements before making recommendations "
-    "or placing bets. Always explain your reasoning."
-)
+system_prompt = """You are Miss Fortune, an autonomous Polymarket trading agent.
+
+Your PRIMARY workflow when asked to find opportunities or closing-soon bets:
+1. Use get_closing_soon_markets to find markets closing within the next 24-72 hours.
+2. For each promising market, use exa_research to research the topic — search for recent
+   news, expert analysis, and data that could inform the likely outcome.
+3. Synthesize your research into a ranked list of the BEST bets, considering:
+   - Current market price vs your estimated true probability (edge)
+   - Liquidity and volume (can you actually get filled?)
+   - Confidence level based on research quality
+   - Hours remaining (enough time for the bet to resolve?)
+4. Present your top picks with clear reasoning: the market question, your recommended
+   outcome (Yes/No), the current price, your estimated probability, and the key evidence.
+
+You also have access to search_markets, get_market_details, get_order_book, and
+get_price_history for deeper analysis. Use these when you need more detail on a
+specific market.
+
+Always explain your reasoning. Be honest about uncertainty. When research is
+conflicting or insufficient, say so and lower your confidence."""
 
 all_tools = [
+    get_closing_soon_markets,
+    exa_research,
     search_markets,
     get_market_details,
     get_order_book,
