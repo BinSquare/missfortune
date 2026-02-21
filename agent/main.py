@@ -19,9 +19,29 @@ from ag_ui_strands import (
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from strands import Agent, tool
-from strands.models.openai import OpenAIModel
+from strands.models.anthropic import AnthropicModel
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+# ---------------------------------------------------------------------------
+# Datadog LLM Observability
+# ---------------------------------------------------------------------------
+
+from ddtrace import tracer
+from ddtrace.llmobs import LLMObs
+
+# Disable default APM tracer (no local Datadog Agent needed)
+tracer.enabled = False
+
+if os.getenv("DD_API_KEY"):
+    LLMObs.enable(
+        ml_app=os.getenv("DD_LLMOBS_ML_APP", "missfortune"),
+        agentless_enabled=os.getenv("DD_LLMOBS_AGENTLESS_ENABLED", "1") == "1",
+        integrations_enabled=True,
+    )
+    print("[Datadog] LLM Observability enabled — ml_app:", os.getenv("DD_LLMOBS_ML_APP", "missfortune"))
+else:
+    print("[Datadog] LLM Observability disabled — set DD_API_KEY to enable")
 
 # ---------------------------------------------------------------------------
 # State models
@@ -36,6 +56,10 @@ class Market(BaseModel):
     volume: str = ""
     liquidity: str = ""
     end_date: str = ""
+    recommendation: str = ""
+    confidence: float = 0.0
+    reasoning: str = ""
+    edge: float = 0.0
 
 
 class Position(BaseModel):
@@ -50,6 +74,8 @@ class AgentState(BaseModel):
     markets: list[Market] = Field(default_factory=list)
     positions: list[Position] = Field(default_factory=list)
     last_action: str = ""
+    wallet_balance: str = ""
+    total_pnl: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -65,16 +91,18 @@ if os.getenv("EXA_API_KEY"):
 
 
 @tool
-def get_closing_soon_markets(hours: int = 72, limit: int = 15):
-    """Fetch Polymarket prediction markets that are closing soon.
+def get_closing_soon_markets(limit: int = 15):
+    """Fetch active Polymarket prediction markets sorted by most recent activity.
+
+    Note: Polymarket's endDate field is often inaccurate, so this returns
+    the most actively traded open markets instead of filtering by end date.
+    The agent should look at market questions to identify time-sensitive ones.
 
     Args:
-        hours: How many hours from now to look ahead (default 72).
         limit: Maximum number of results to return (default 15).
 
     Returns:
-        JSON string of markets closing within the specified window, sorted by
-        end date (soonest first), with outcomes and current prices.
+        JSON string of active markets with outcomes and current prices.
     """
     try:
         resp = requests.get(
@@ -82,44 +110,33 @@ def get_closing_soon_markets(hours: int = 72, limit: int = 15):
             params={
                 "active": True,
                 "closed": False,
-                "limit": 100,
-                "order": "endDate",
-                "ascending": True,
+                "limit": limit,
+                "order": "volume24hr",
+                "ascending": False,
             },
             timeout=15,
         )
         resp.raise_for_status()
         all_markets = resp.json()
 
-        now = datetime.now(timezone.utc)
-        closing_soon = []
+        results = []
         for mkt in all_markets:
-            end_str = mkt.get("endDate", "")
-            if not end_str:
-                continue
-            try:
-                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-                diff_hours = (end_dt - now).total_seconds() / 3600
-                if 0 < diff_hours <= hours:
-                    closing_soon.append(
-                        {
-                            "id": mkt.get("id", ""),
-                            "question": mkt.get("question", ""),
-                            "outcomes": json.loads(mkt.get("outcomes", "[]")),
-                            "outcome_prices": json.loads(
-                                mkt.get("outcomePrices", "[]")
-                            ),
-                            "volume": mkt.get("volume", "0"),
-                            "liquidity": mkt.get("liquidity", "0"),
-                            "end_date": end_str,
-                            "hours_remaining": round(diff_hours, 1),
-                        }
-                    )
-            except (ValueError, TypeError):
-                continue
+            results.append(
+                {
+                    "id": mkt.get("id", ""),
+                    "question": mkt.get("question", ""),
+                    "outcomes": json.loads(mkt.get("outcomes", "[]")),
+                    "outcome_prices": json.loads(
+                        mkt.get("outcomePrices", "[]")
+                    ),
+                    "volume": mkt.get("volume", "0"),
+                    "volume_24h": mkt.get("volume24hr", "0"),
+                    "liquidity": mkt.get("liquidity", "0"),
+                    "end_date": mkt.get("endDate", ""),
+                }
+            )
 
-        closing_soon.sort(key=lambda x: x["hours_remaining"])
-        return json.dumps(closing_soon[:limit], indent=2)
+        return json.dumps(results[:limit], indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -280,14 +297,67 @@ def get_price_history(token_id: str):
         return json.dumps({"error": str(e)})
 
 
-@tool
-def update_watchlist(markets: AgentState):
-    """Update the shared watchlist/state with discovered markets and positions.
+# USDC contract on Polygon
+_USDC_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+_POLYGON_RPC = "https://polygon-rpc.com"
 
-    IMPORTANT: Always provide the entire state, not just new items.
+
+@tool
+def get_wallet_balance():
+    """Get the USDC balance of the configured Polymarket wallet on Polygon.
+
+    Returns:
+        JSON string with wallet address and USDC balance, or an error if no wallet is configured.
+    """
+    pk = os.getenv("POLYMARKET_PRIVATE_KEY")
+    if not pk:
+        return json.dumps({"balance": "0", "address": "", "error": "No wallet configured"})
+    try:
+        from eth_account import Account
+
+        address = Account.from_key(pk).address
+        # ERC-20 balanceOf(address) selector = 0x70a08231
+        data = "0x70a08231" + address[2:].lower().zfill(64)
+        resp = requests.post(
+            _POLYGON_RPC,
+            json={
+                "jsonrpc": "2.0",
+                "method": "eth_call",
+                "params": [{"to": _USDC_POLYGON, "data": data}, "latest"],
+                "id": 1,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result", "0x0")
+        # USDC has 6 decimals
+        balance_raw = int(result, 16)
+        balance = balance_raw / 1e6
+        return json.dumps({"address": address, "balance": f"{balance:.2f}"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def update_watchlist(
+    markets: list[dict],
+    positions: list[dict] | None = None,
+    last_action: str = "",
+    wallet_balance: str = "",
+):
+    """Update the dashboard watchlist with markets you discovered.
+
+    Call this after finding or analyzing markets so they appear on the dashboard.
 
     Args:
-        markets: The complete updated agent state.
+        markets: List of market dicts, each with keys: id, question, outcomes,
+                 outcome_prices, volume, liquidity, end_date.
+                 After research, also include: recommendation (e.g. "BUY Yes"),
+                 confidence (0.0-1.0), reasoning (1-2 sentence summary),
+                 edge (estimated true probability minus market price, e.g. 0.12).
+        positions: Optional list of position dicts.
+        last_action: Description of what you just did.
+        wallet_balance: USDC balance string from get_wallet_balance (e.g. "150.00").
 
     Returns:
         Success message.
@@ -411,6 +481,8 @@ def build_market_prompt(input_data, user_message: str) -> str:
             parts.append(
                 f"Current positions:\n{json.dumps(state_dict['positions'], indent=2)}"
             )
+        if state_dict.get("wallet_balance"):
+            parts.append(f"Wallet USDC balance: {state_dict['wallet_balance']}")
         if state_dict.get("last_action"):
             parts.append(f"Last action: {state_dict['last_action']}")
         if parts:
@@ -425,14 +497,18 @@ async def market_state_from_args(context):
         if isinstance(tool_input, str):
             tool_input = json.loads(tool_input)
 
-        markets_data = tool_input.get("markets", tool_input)
-
-        if isinstance(markets_data, dict):
-            return {
-                "markets": markets_data.get("markets", []),
-                "positions": markets_data.get("positions", []),
-                "last_action": markets_data.get("last_action", ""),
-            }
+        # Handle flat params: {markets: [...], positions: [...], last_action: "..."}
+        if isinstance(tool_input, dict):
+            markets = tool_input.get("markets", [])
+            if isinstance(markets, list):
+                state = {
+                    "markets": markets,
+                    "positions": tool_input.get("positions", []) or [],
+                    "last_action": tool_input.get("last_action", ""),
+                }
+                if tool_input.get("wallet_balance"):
+                    state["wallet_balance"] = tool_input["wallet_balance"]
+                return state
         return None
     except Exception:
         return None
@@ -452,29 +528,45 @@ shared_state_config = StrandsAgentConfig(
     },
 )
 
-api_key = os.getenv("OPENAI_API_KEY", "")
-model = OpenAIModel(
-    client_args={"api_key": api_key},
-    model_id="gpt-4o",
+model = AnthropicModel(
+    client_args={
+        "api_key": os.getenv("MINIMAX_API_KEY", ""),
+        "base_url": "https://api.minimax.io/anthropic",
+    },
+    model_id="MiniMax-M2.5",
+    max_tokens=4096,
 )
 
 system_prompt = """You are Miss Fortune, an autonomous Polymarket trading agent.
 
-Your PRIMARY workflow when asked to find opportunities or closing-soon bets:
-1. Use get_closing_soon_markets to find markets closing within the next 24-72 hours.
-2. For each promising market, use exa_research to research the topic — search for recent
+CRITICAL RULE: You MUST call update_watchlist after every search or analysis.
+This populates the dashboard. If you skip it, the user sees an empty page.
+
+Your PRIMARY workflow when asked to find opportunities or scan for bets:
+1. Use get_closing_soon_markets to find active markets.
+2. IMMEDIATELY call update_watchlist with the markets you found, plus
+   last_action describing what you did (e.g. "Found 15 active markets").
+3. For each promising market, use exa_research to research the topic — search for recent
    news, expert analysis, and data that could inform the likely outcome.
-3. Synthesize your research into a ranked list of the BEST bets, considering:
+4. Synthesize your research into a ranked list of the BEST bets, considering:
    - Current market price vs your estimated true probability (edge)
    - Liquidity and volume (can you actually get filled?)
    - Confidence level based on research quality
-   - Hours remaining (enough time for the bet to resolve?)
-4. Present your top picks with clear reasoning: the market question, your recommended
-   outcome (Yes/No), the current price, your estimated probability, and the key evidence.
+5. Call update_watchlist AGAIN with your analyzed markets. For EACH market you researched,
+   you MUST include these fields in the market dict:
+   - recommendation: Your pick, e.g. "BUY Yes" or "BUY No" (or "" if no recommendation)
+   - confidence: A float from 0.0 to 1.0 reflecting how confident you are
+   - reasoning: A 1-2 sentence summary of WHY this is a good bet (key evidence)
+   - edge: Your estimated true probability minus the current market price (e.g. 0.15 means you think the true prob is 15 points higher than the market price)
+   These fields populate the dashboard cards so the user can see your analysis at a glance.
+6. Present your top picks in chat with detailed reasoning.
 
 You also have access to search_markets, get_market_details, get_order_book, and
 get_price_history for deeper analysis. Use these when you need more detail on a
 specific market.
+
+You also have get_wallet_balance to check the wallet's USDC balance on Polygon.
+Call it when starting a scan so the dashboard shows the current balance.
 
 Always explain your reasoning. Be honest about uncertainty. When research is
 conflicting or insufficient, say so and lower your confidence."""
@@ -486,6 +578,7 @@ all_tools = [
     get_market_details,
     get_order_book,
     get_price_history,
+    get_wallet_balance,
     update_watchlist,
     get_positions,
     place_bet,
